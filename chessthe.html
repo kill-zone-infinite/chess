@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>P2P Multiplayer Chess (PeerJS Online Edition)</title>
+  
+  <style>
+    :root {
+      --light: #f1cd94;
+      --dark: #ec9d43ca;
+      --light-highlight: #5b7088;
+      --dark-highlight: #41536b;
+      --accent: #e2e8f0;
+      --background: #0f172a;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    
+    body {
+      font-family: Inter, system-ui, sans-serif;
+      color: var(--accent);
+      background: radial-gradient(circle at top, #111827 0%, #0b1120 100%);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 16px;
+      overflow: hidden;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 240px 1fr 260px;
+      grid-template-areas: "left center right";
+      align-items: start;
+      gap: 14px;
+      width: 100%;
+      max-width: 1200px;
+      height: calc(100vh - 32px);
+    }
+    @media (max-width: 900px) {
+      .layout {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr auto;
+        grid-template-areas: "left" "center" "right";
+        overflow-y: auto;
+        height: auto;
+      }
+      body { overflow-y: auto; }
+    }
+
+    .left-panel { grid-area: left; }
+    .board-main { grid-area: center; display: flex; justify-content: center; align-items: center; height: 100%; }
+    .right-panel { grid-area: right; }
+
+    .sidebar { display: flex; flex-direction: column; gap: 14px; max-height: 100%; }
+    
+    .sidebar-section {
+      background: rgba(30, 41, 59, 0.7);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    .sidebar h2 {
+      font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em;
+      color: #94a3b8; margin-top: 0; margin-bottom: 12px; font-weight: 700;
+    }
+
+    .controls, .scoreboard { display: flex; flex-direction: column; gap: 10px; }
+    .player-choice { font-size: 0.9rem; }
+    
+    .new-game-btn, .takeback-btn, .gameover-btn {
+      width: 100%; padding: 10px; border-radius: 8px; border: none;
+      font-weight: 600; font-size: 0.9rem; cursor: pointer; transition: all 0.2s ease;
+    }
+    
+    .new-game-btn { background: #ef4444; color: white; }
+    .new-game-btn:hover { background: #dc2626; }
+    .takeback-btn { background: #f59e0b; color: white; }
+    .takeback-btn:hover:not(:disabled) { background: #d97706; }
+    .takeback-btn:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+
+    .score-row { display: flex; justify-content: space-between; font-size: 0.9rem; color: #cbd5e1; }
+    .score-val { font-weight: 700; color: #f8fafc; }
+
+    .timers { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
+    .timer-item {
+      background: #0f172a; border: 1px solid #334155; border-radius: 8px;
+      padding: 8px; display: flex; flex-direction: column; align-items: center; gap: 2px;
+    }
+    .timer-item span:first-child { font-size: 0.7rem; color: #64748b; text-transform: uppercase; font-weight: 600; }
+    .timer-item span:last-child { font-size: 1.1rem; font-weight: 700; font-family: monospace; color: #cbd5e1; }
+    .timer-item.active { border-color: #fbbf24; box-shadow: 0 0 10px rgba(251, 191, 36, 0.2); }
+    .timer-item.active span:last-child { color: #fbbf24; }
+
+    .board-wrapper { display: flex; flex-direction: column; align-items: center; gap: 12px; width: 100%; }
+    
+    .board {
+      display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr);
+      width: min(70vh, 500px); height: min(70vh, 500px); border: 6px solid #1e293b;
+      border-radius: 8px; overflow: hidden; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
+    }
+    .square {
+      border: none; padding: 0; margin: 0; display: flex;
+      justify-content: center; align-items: center; position: relative;
+    }
+    .square:has(.piece) { cursor: default; }
+    .square.light { background-color: var(--light); }
+    .square.dark { background-color: var(--dark); }
+    .square.selected { background-color: var(--light-highlight) !important; }
+    .square.legal::after {
+      content: ""; width: 24%; height: 24%; background: rgba(0, 0, 0, 0.25);
+      border-radius: 50%; position: absolute;
+    }
+    .piece { width: 85%; height: 85%; object-fit: contain; z-index: 2; }
+
+    .status { font-size: 1.1rem; font-weight: 600; text-align: center; color: #f8fafc; }
+    .info { font-size: 0.85rem; color: #94a3b8; line-height: 1.5; margin: 0; }
+    .board-info { color: #64748b; font-size: 0.8rem; }
+
+    .move-history {
+      background: #0f172a; border: 1px solid #334155; border-radius: 8px;
+      height: 160px; overflow-y: auto; padding: 8px;
+    }
+    .move-list-empty { color: #475569; font-size: 0.85rem; text-align: center; margin-top: 16px; font-style: italic; }
+    .move-list { display: grid; grid-template-columns: 35px 1fr 1fr; gap: 4px; font-size: 0.85rem; font-family: monospace; }
+    .move-list-header { color: #64748b; font-weight: 700; border-bottom: 1px solid #1e293b; padding-bottom: 4px; margin-bottom: 4px; }
+    .move-num { color: #475569; text-align: right; padding-right: 6px; }
+    .move-notation { color: #cbd5e1; }
+
+    /* Overlays */
+    .gameover-overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(12px);
+      display: flex; justify-content: center; align-items: center; z-index: 999;
+    }
+    .gameover-overlay.hidden { display: none !important; }
+    .gameover-card {
+      background: #1e293b; border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px; padding: 24px; text-align: center;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+      display: flex; flex-direction: column; align-items: center; gap: 14px;
+    }
+
+    .lobby-card { width: 360px; }
+    .lobby-title { font-size: 1.6rem; color: #f8fafc; font-weight: 800; }
+    .lobby-action-group { display: flex; flex-direction: column; gap: 12px; width: 100%; }
+    .lobby-divider { color: #64748b; font-size: 0.85rem; font-weight: 600; }
+    .lobby-input {
+      padding: 10px; border-radius: 8px; border: 1px solid #334155;
+      background: #0f172a; color: white; text-align: center; font-size: 1rem;
+    }
+    .lobby-status { font-size: 0.9rem; color: #fbbf24; font-weight: 500; }
+
+    .host-btn { background: #2563eb; color: white; }
+    .join-btn { background: #475569; color: white; }
+
+    .host-config-box {
+      text-align: left; background: #0f172a; padding: 14px; border-radius: 10px;
+      display: flex; flex-direction: column; gap: 10px; width: 100%; border: 1px solid #334155;
+    }
+    .config-heading { font-weight: 700; color: #cbd5e1; font-size: 0.85rem; text-transform: uppercase; }
+    .config-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.9rem; }
+    .config-select { background: #1e293b; color: white; border: 1px solid #475569; padding: 6px; border-radius: 6px; cursor: pointer; }
+    .start-match-btn { background: #22c55e; color: white; margin-top: 6px; }
+
+    .takeback-card, .msg-card { padding: 30px; width: 340px; }
+    .small-title { font-size: 1.4rem; color: #f8fafc; }
+    .takeback-actions { display: flex; gap: 12px; width: 100%; margin-top: 6px; }
+    .approve-btn { background: #22c55e; color: white; }
+    .decline-btn { background: #ef4444; color: white; }
+
+    .gameover-icon { font-size: 4rem; line-height: 1; filter: drop-shadow(0 0 20px rgba(250, 204, 21, 0.5)); }
+    .gameover-title { font-size: 2.2rem; font-weight: 800; color: #f8fafc; }
+    .gameover-title.win { color: #4ade80; }
+    .gameover-title.lose { color: #f87171; }
+    .gameover-title.draw { color: #fbbf24; }
+    .gameover-sub { font-size: 1rem; color: #94a3b8; }
+  </style>
+</head>
+<body>
+
+  <div id="messageOverlay" class="gameover-overlay hidden">
+    <div class="gameover-card msg-card">
+      <div id="messageTitle" class="gameover-title small-title">Notice</div>
+      <div id="messageText" class="gameover-sub"></div>
+      <div class="takeback-actions">
+        <button id="messageOkBtn" class="gameover-btn approve-btn">OK</button>
+        <button id="messageCancelBtn" class="gameover-btn decline-btn hidden">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="lobbyOverlay" class="gameover-overlay">
+    <div class="gameover-card lobby-card">
+      <div class="gameover-title lobby-title">P2P Multiplayer</div>
+      <p style="font-size:0.78rem;color:#64748b;margin:0 0 4px;text-align:center;">Both players must open this file from a hosted secure web address context.</p>
+      
+      <div id="lobbyInitialActions" class="lobby-action-group">
+        <button id="hostRoomBtn" class="gameover-btn host-btn">Host a New Match</button>
+        <div class="lobby-divider">— OR —</div>
+        <input type="text" id="joinRoomCodeInput" placeholder="Enter Room ID" class="lobby-input" />
+        <button id="joinRoomBtn" class="gameover-btn join-btn">Join via Code</button>
+      </div>
+
+      <div id="lobbyRoomSetup" class="lobby-action-group hidden">
+        <div class="room-code-display" style="text-align: center; font-size: 1.1rem; background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid #334155;">Room ID: <strong id="displayRoomId" style="color: #fbbf24; font-family: monospace; letter-spacing: 1px;">...</strong></div>
+        <div id="lobbyStatusText" class="lobby-status" style="text-align: center; margin: 6px 0;">Initializing P2P Connection...</div>
+        
+        <div id="hostConfigForm" class="host-config-box hidden">
+          <span class="config-heading">Match Settings:</span>
+          <label class="config-row">
+            <span>Your Color:</span>
+            <select id="networkColorSelect" class="config-select">
+              <option value="w">White</option>
+              <option value="b">Black</option>
+            </select>
+          </label>
+          <label class="config-row">
+            <span>Time Control:</span>
+            <select id="networkTimerSelect" class="config-select">
+              <option value="60">1 Minute</option>
+              <option value="180">3 Minutes</option>
+              <option value="300" selected>5 Minutes</option>
+              <option value="600">10 Minutes</option>
+              <option value="0">No Limit</option>
+            </select>
+          </label>
+          <button id="networkStartBtn" class="gameover-btn start-match-btn">Start Game</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="takebackOverlay" class="gameover-overlay hidden">
+    <div class="gameover-card takeback-card">
+      <div class="gameover-title small-title">Takeback Request</div>
+      <div id="takebackPromptText" class="gameover-sub">Opponent wants to undo their last move. Do you allow it?</div>
+      <div class="takeback-actions">
+        <button id="approveTakebackBtn" class="gameover-btn approve-btn">Approve</button>
+        <button id="declineTakebackBtn" class="gameover-btn decline-btn">Decline</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="gameOverOverlay" class="gameover-overlay hidden">
+    <div class="gameover-card">
+      <div id="gameOverIcon" class="gameover-icon">!</div>
+      <div id="gameOverTitle" class="gameover-title">Game Over</div>
+      <div id="gameOverSub" class="gameover-sub"></div>
+      <button id="gameOverNewGame" class="gameover-btn">Back to Lobby</button>
+    </div>
+  </div>
+
+  <div class="layout">
+    <aside class="sidebar left-panel">
+      <div class="sidebar-section">
+        <h2>Match Info</h2>
+        <div class="controls">
+          <div class="player-choice">
+            <span id="networkRoleLabel" style="font-weight: 600; color: #fbbf24;">Not connected</span>
+          </div>
+          <button id="leaveGameButton" class="new-game-btn">Leave Match</button>
+          <button id="takebackButton" class="takeback-btn" disabled>Takeback</button>
+        </div>
+      </div>
+      <div class="sidebar-section">
+        <h2>Timers & Points</h2>
+        <div class="scoreboard">
+          <div class="score-row">
+            <span id="playerScoreLabel">White</span>
+            <span id="playerScoreValue" class="score-val">0</span>
+          </div>
+          <div class="score-row">
+            <span id="opponentScoreLabel">Black</span>
+            <span id="opponentScoreValue" class="score-val">0</span>
+          </div>
+          <div class="timers">
+            <div id="playerTimerItem" class="timer-item">
+              <span id="playerTimerLabel">White Time</span>
+              <span id="playerTimerValue">--:--</span>
+            </div>
+            <div id="opponentTimerItem" class="timer-item">
+              <span id="opponentTimerLabel">Black Time</span>
+              <span id="opponentTimerValue">--:--</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="board-main">
+      <div class="board-wrapper">
+        <div id="board" class="board"></div>
+        <div id="gameModeInfo" class="info board-info">Establishing P2P network...</div>
+        <div id="status" class="status">Lobby room initialization pending...</div>
+      </div>
+    </main>
+
+    <aside class="sidebar right-panel">
+      <div class="sidebar-section">
+        <h2>Game Info</h2>
+        <div class="info">
+          <p>Online Multiplayer via WebRTC — play with anyone worldwide.</p>
+          <p>Share your Room ID with your opponent, then interact with pieces only during your active turn.</p>
+        </div>
+      </div>
+      <div class="sidebar-section">
+        <h2>Move History</h2>
+        <div id="moveHistory" class="move-history">
+          <div class="move-list-empty">No moves played yet</div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  
+  <script>
+    // -- PEER JS NETWORKING STATE --
+    let peer = null;
+    let peerConnection = null; 
+    let networkRole = null;  
+    let localColor = 'w';    
+
+    // DOM Elements
+    const boardElement            = document.getElementById('board');
+    const statusElement           = document.getElementById('status');
+    const leaveGameButton         = document.getElementById('leaveGameButton');
+    const takebackButton          = document.getElementById('takebackButton');
+    const gameModeInfo            = document.getElementById('gameModeInfo');
+    const playerScoreLabel        = document.getElementById('playerScoreLabel');
+    const playerScoreValue        = document.getElementById('playerScoreValue');
+    const opponentScoreLabel      = document.getElementById('opponentScoreLabel');
+    const opponentScoreValue      = document.getElementById('opponentScoreValue');
+    const playerTimerValue        = document.getElementById('playerTimerValue');
+    const opponentTimerValue      = document.getElementById('opponentTimerValue');
+    const playerTimerItem         = document.getElementById('playerTimerItem');
+    const opponentTimerItem       = document.getElementById('opponentTimerItem');
+    const moveHistoryContainer    = document.getElementById('moveHistory');
+
+    // Overlays
+    const gameOverOverlay         = document.getElementById('gameOverOverlay');
+    const gameOverIcon            = document.getElementById('gameOverIcon');
+    const gameOverTitle           = document.getElementById('gameOverTitle');
+    const gameOverSub             = document.getElementById('gameOverSub');
+    const gameOverNewGame         = document.getElementById('gameOverNewGame');
+
+    const lobbyOverlay            = document.getElementById('lobbyOverlay');
+    const lobbyInitialActions     = document.getElementById('lobbyInitialActions');
+    const lobbyRoomSetup          = document.getElementById('lobbyRoomSetup');
+    const displayRoomId           = document.getElementById('displayRoomId');
+    const lobbyStatusText         = document.getElementById('lobbyStatusText');
+    const hostConfigForm          = document.getElementById('hostConfigForm');
+
+    // Message Overlay System
+    const messageOverlay          = document.getElementById('messageOverlay');
+    const messageTitle            = document.getElementById('messageTitle');
+    const messageText             = document.getElementById('messageText');
+    const messageOkBtn            = document.getElementById('messageOkBtn');
+    const messageCancelBtn        = document.getElementById('messageCancelBtn');
+
+    // Inputs & Buttons
+    const hostRoomBtn             = document.getElementById('hostRoomBtn');
+    const joinRoomCodeInput       = document.getElementById('joinRoomCodeInput');
+    const joinRoomBtn             = document.getElementById('joinRoomBtn');
+    const networkColorSelect      = document.getElementById('networkColorSelect');
+    const networkTimerSelect      = document.getElementById('networkTimerSelect');
+    const networkStartBtn         = document.getElementById('networkStartBtn');
+    const networkRoleLabel        = document.getElementById('networkRoleLabel');
+
+    const takebackOverlay         = document.getElementById('takebackOverlay');
+    const takebackPromptText      = document.getElementById('takebackPromptText');
+    const approveTakebackBtn      = document.getElementById('approveTakebackBtn');
+    const declineTakebackBtn      = document.getElementById('declineTakebackBtn');
+
+    // Asset Configuration
+    const pieceValues  = { p:1, n:3, b:3, r:5, q:9, k:0 };
+    const PIECE_URL = {
+      wK: 'https://upload.wikimedia.org/wikipedia/commons/4/42/Chess_klt45.svg',
+      wQ: 'https://upload.wikimedia.org/wikipedia/commons/1/15/Chess_qlt45.svg',
+      wR: 'https://upload.wikimedia.org/wikipedia/commons/7/72/Chess_rlt45.svg',
+      wB: 'https://upload.wikimedia.org/wikipedia/commons/b/b1/Chess_blt45.svg',
+      wN: 'https://upload.wikimedia.org/wikipedia/commons/7/70/Chess_nlt45.svg',
+      wP: 'https://upload.wikimedia.org/wikipedia/commons/4/45/Chess_plt45.svg',
+      bK: 'https://upload.wikimedia.org/wikipedia/commons/f/f0/Chess_kdt45.svg',
+      bQ: 'https://upload.wikimedia.org/wikipedia/commons/4/47/Chess_qdt45.svg',
+      bR: 'https://upload.wikimedia.org/wikipedia/commons/f/ff/Chess_rdt45.svg',
+      bB: 'https://upload.wikimedia.org/wikipedia/commons/9/98/Chess_bdt45.svg',
+      bN: 'https://upload.wikimedia.org/wikipedia/commons/e/ef/Chess_ndt45.svg',
+      bP: 'https://upload.wikimedia.org/wikipedia/commons/c/c7/Chess_pdt45.svg',
+    };
+
+    // Core Engine App State
+    const game = new Chess();
+    let selectedSquare    = null;
+    let legalSquares      = [];
+    let gameStarted       = false; 
+
+    let selectedTimerSeconds = 300;
+    let boardScore = { white: 0, black: 0 };
+    let timerValues = { white: 300, black: 300 };
+    let activeTimerSide = null;
+    let timerInterval   = null;
+
+    // ── Overlays & Modals ───────────────────────────────────────────────────
+
+    function showMessageBox(title, msg, onOk = null, showCancel = false, onCancel = null) {
+      messageTitle.textContent = title;
+      messageText.textContent = msg;
+      messageCancelBtn.classList.toggle('hidden', !showCancel);
+      messageOverlay.classList.remove('hidden');
+
+      messageOkBtn.onclick = () => {
+        messageOverlay.classList.add('hidden');
+        if (onOk) onOk();
+      };
+      messageCancelBtn.onclick = () => {
+        messageOverlay.classList.add('hidden');
+        if (onCancel) onCancel();
+      };
+    }
+
+    function showGameOver(type, title, sub) {
+      const icons = { win: 'W', lose: 'L', draw: '=' };
+      gameOverIcon.textContent  = icons[type] || '!';
+      gameOverTitle.textContent = title;
+      gameOverTitle.className   = `gameover-title ${type}`;
+      gameOverSub.textContent   = sub || '';
+      gameOverOverlay.classList.remove('hidden');
+    }
+
+    gameOverNewGame.addEventListener('click', () => {
+      if (peerConnection) peerConnection.close();
+      if (peer) peer.destroy();
+      window.location.reload(); 
+    });
+
+    // ── Clock Management ───────────────────────────────────────────────────
+
+    function stopTimer() { if (timerInterval) { clearInterval(timerInterval); timerInterval = null; } }
+
+    function formatTime(s) {
+      if (selectedTimerSeconds === 0) return '∞';
+      return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+    }
+
+    function updateTimerDisplay() {
+      playerTimerValue.textContent   = formatTime(timerValues.white);
+      opponentTimerValue.textContent = formatTime(timerValues.black);
+      playerTimerItem.classList.toggle('active', activeTimerSide === 'white');
+      opponentTimerItem.classList.toggle('active', activeTimerSide === 'black');
+    }
+
+    function endByTimeout(loserSide) {
+      stopTimer();
+      const isWhite = loserSide === 'white';
+      statusElement.textContent = isWhite ? 'Black wins on time.' : 'White wins on time.';
+      if (localColor === (isWhite ? 'w' : 'b')) showGameOver('lose', 'You Lost!', 'Time expired');
+      else showGameOver('win', 'You Win!', 'Opponent timed out');
+    }
+
+    function tickTimer() {
+      if (!activeTimerSide || selectedTimerSeconds === 0) return;
+      if (timerValues[activeTimerSide] <= 0) { endByTimeout(activeTimerSide); return; }
+      timerValues[activeTimerSide] -= 1;
+      updateTimerDisplay();
+    }
+
+    function startTimerForCurrentTurn() {
+      if (!gameStarted) return; 
+      activeTimerSide = game.turn() === 'w' ? 'white' : 'black';
+      stopTimer();
+      if (selectedTimerSeconds !== 0) timerInterval = setInterval(tickTimer, 1000);
+      updateTimerDisplay();
+    }
+
+    // ── Game Metadata Synchronizers ────────────────────────────────────────
+
+    function updateScoreboard() {
+      playerScoreValue.textContent = boardScore.white;
+      opponentScoreValue.textContent = boardScore.black;
+      if (localColor === 'w') {
+        playerScoreLabel.textContent   = 'White (You)';
+        opponentScoreLabel.textContent = 'Black (Opponent)';
+      } else {
+        playerScoreLabel.textContent   = 'White (Opponent)';
+        opponentScoreLabel.textContent = 'Black (You)';
+      }
+    }
+
+    function updateTakebackButton() {
+      const isOpponentTurn = game.turn() !== localColor;
+      const hasHistory = game.history().length >= 1;
+      takebackButton.disabled = !(gameStarted && isOpponentTurn && hasHistory);
+    }
+
+    function updateMoveHistory() {
+      const history = game.history();
+      if (history.length === 0) {
+        moveHistoryContainer.innerHTML = '<div class="move-list-empty">No moves played yet</div>';
+        return;
+      }
+      let html = `<div class="move-list"><div class="move-list-header">#</div><div class="move-list-header">White</div><div class="move-list-header">Black</div>`;
+      for (let i = 0; i < history.length; i += 2) {
+        html += `<div class="move-num">${Math.floor(i / 2) + 1}.</div><div class="move-notation">${history[i]}</div><div class="move-notation">${history[i + 1] || ''}</div>`;
+      }
+      moveHistoryContainer.innerHTML = html + '</div>';
+      moveHistoryContainer.scrollTop = moveHistoryContainer.scrollHeight;
+    }
+
+    // ── Board Interface Layout Loops ────────────────────────────────────────
+
+    function createBoard() {
+      boardElement.innerHTML = '';
+      const files = ['a','b','c','d','e','f','g','h'];
+      const rankStart = (localColor === 'w') ? 8 : 1, rankEnd = (localColor === 'w') ? 1 : 8, rankStep = (localColor === 'w') ? -1 : 1;
+      const fileStart = (localColor === 'w') ? 0 : 7, fileEnd = (localColor === 'w') ? 8 : -1, fileStep = (localColor === 'w') ? 1 : -1;
+
+      for (let rank = rankStart; rank !== rankEnd + rankStep; rank += rankStep) {
+        for (let file = fileStart; file !== fileEnd; file += fileStep) {
+          const name = `${files[file]}${rank}`;
+          const sq = document.createElement('button');
+          sq.type = 'button';
+          sq.className = `square ${(file + rank) % 2 === 0 ? 'dark' : 'light'}`;
+          sq.dataset.square = name;
+          sq.addEventListener('click', () => handleSquareClick(name));
+          boardElement.appendChild(sq);
+        }
+      }
+    }
+
+    function renderBoard() {
+      const board = game.board();
+      document.querySelectorAll('.square').forEach((el) => {
+        const name = el.dataset.square, file = name.charCodeAt(0) - 97, rank = 8 - parseInt(name[1], 10);
+        const piece = board[rank][file];
+        if (piece) {
+          const key = `${piece.color}${piece.type.toUpperCase()}`;
+          el.innerHTML = `<img class="piece" src="${PIECE_URL[key]}" alt="${key}">`;
+        } else el.textContent = '';
+        el.classList.toggle('selected', selectedSquare === name);
+        el.classList.toggle('legal', legalSquares.includes(name));
+      });
+      
+      if (!gameStarted) statusElement.textContent = 'Setup configurations pending...';
+      else if (game.in_checkmate()) {
+        stopTimer();
+        const whiteWon = game.turn() === 'b';
+        statusElement.textContent = whiteWon ? 'Checkmate! White wins.' : 'Checkmate! Black wins.';
+        showGameOver(localColor === (whiteWon ? 'w' : 'b') ? 'win' : 'lose', whiteWon ? 'White Wins!' : 'Black Wins!', 'Checkmate');
+      } else if (game.in_draw()) {
+        stopTimer();
+        statusElement.textContent = 'Draw!';
+        showGameOver('draw', "It's a Draw!", 'Stalemate / Insufficient Material');
+      } else {
+        statusElement.textContent = (game.turn() === localColor) ? `Your Turn (${localColor === 'w' ? 'White' : 'Black'})` : `Waiting for Opponent...`;
+        if (game.in_check()) statusElement.textContent += ' - Check!';
+      }
+      updateTakebackButton();
+    }
+
+    // ── Operational Inputs ─────────────────────────────────────────────────
+
+    function handleSquareClick(square) {
+      if (!gameStarted || game.turn() !== localColor) return;
+      const piece = game.get(square);
+
+      if (selectedSquare && legalSquares.includes(square)) {
+        const move = game.move({ from: selectedSquare, to: square, promotion: 'q' });
+        if (move) {
+          if (move.captured) {
+            const pts = pieceValues[move.captured.toLowerCase()] || 0;
+            if (move.color === 'w') boardScore.white += pts; else boardScore.black += pts;
+          }
+          if (peerConnection) {
+            sendNetworkMessage({ type: "make_move", fen: game.fen(), nextTurn: game.turn(), moveObj: move });
+          }
+        }
+        selectedSquare = null; legalSquares = [];
+        renderBoard(); updateScoreboard(); updateMoveHistory(); startTimerForCurrentTurn();
+        return;
+      }
+      
+      if (piece && piece.color === localColor) {
+        selectedSquare = square; legalSquares = game.moves({ square, verbose: true }).map(m => m.to);
+      } else { selectedSquare = null; legalSquares = []; }
+      renderBoard();
+    }
+
+    // ── PeerJS WebRTC P2P Sync Logic ──────────────────────────────────────
+
+    // Safe network engine wrapper to stringify object models before transport channels
+    function sendNetworkMessage(payload) {
+        if (!peerConnection || !peerConnection.open) {
+            console.warn('No active peer connection. Message dropped:', payload);
+            return;
+        }
+        peerConnection.send(typeof payload === 'object' ? JSON.stringify(payload) : payload);
+    }
+
+    function initializeGameStart(config) {
+        const hostChoice = config.hostColor;
+        localColor = (networkRole === "host") ? hostChoice : (hostChoice === 'w' ? 'b' : 'w');
+        gameModeInfo.textContent = `Online Match Active. Playing as ${localColor === 'w' ? 'White' : 'Black'}.`;
+        
+        // Force-hide ALL overlays that could block the board
+        lobbyOverlay.classList.add('hidden');
+        messageOverlay.classList.add('hidden');
+        gameOverOverlay.classList.add('hidden');
+
+        selectedTimerSeconds = config.timerSeconds !== undefined ? config.timerSeconds : config.timerMinutes;
+        timerValues = { white: selectedTimerSeconds, black: selectedTimerSeconds };
+        gameStarted = true;
+        
+        createBoard(); renderBoard(); updateScoreboard(); updateMoveHistory(); startTimerForCurrentTurn();
+    }
+
+    function handleNetworkMessage(rawData) {
+        let data = rawData;
+        if (typeof rawData === 'string') {
+            try { data = JSON.parse(rawData); } catch(e){}
+        }
+
+        switch(data.type) {
+            case "guest_ready":
+                // EXPLICIT HANDSHAKE: The guest confirmed their data channel is open. 
+                // It is now safe for the host to render the Start Match configuration controls.
+                if (networkRole === "host") {
+                    lobbyStatusText.textContent = "Opponent joined! Choose settings to start:";
+                    hostConfigForm.classList.remove('hidden');
+                }
+                break;
+            case "game_begun":
+                messageOverlay.classList.add('hidden');
+                lobbyOverlay.classList.add('hidden');
+                initializeGameStart(data.config);
+                break;
+            case "make_move":
+                game.load(data.fen);
+                if (data.moveObj && data.moveObj.captured) {
+                    const pts = pieceValues[data.moveObj.captured.toLowerCase()] || 0;
+                    if (data.nextTurn === 'b') boardScore.white += pts; else boardScore.black += pts;
+                }
+                renderBoard(); updateScoreboard(); updateMoveHistory(); startTimerForCurrentTurn();
+                break;
+            case "request_takeback":
+                takebackPromptText.textContent = "Your opponent requests to undo their last move. Approve?";
+                takebackOverlay.classList.remove('hidden');
+                break;
+            case "respond_takeback":
+                if (data.approved) {
+                    const undone = game.undo();
+                    if (undone && undone.captured) {
+                        const pts = pieceValues[undone.captured.toLowerCase()] || 0;
+                        if (undone.color === 'w') boardScore.white = Math.max(0, boardScore.white - pts);
+                        else boardScore.black = Math.max(0, boardScore.black - pts);
+                    }
+                    selectedSquare = null; legalSquares = [];
+                    renderBoard(); updateScoreboard(); updateMoveHistory(); startTimerForCurrentTurn();
+                } else {
+                    showMessageBox("Takeback Declined", "Your takeback request was declined by the opponent.");
+                }
+                break;
+        }
+    }
+
+    function setupConnectionEvents(conn) {
+        peerConnection = conn;
+
+        conn.on('open', () => {
+            console.info('Peer connection established.');
+            if (networkRole === 'host') {
+                // Wait for the explicit 'guest_ready' payload before showing options
+                lobbyStatusText.textContent = 'Synchronizing peer streams...';
+            }
+        });
+
+        conn.on('data', handleNetworkMessage);
+
+        conn.on('close', () => {
+            stopTimer();
+            showGameOver('draw', "Match Over", "Opponent disconnected.");
+        });
+
+        conn.on('error', (err) => {
+            console.error("Connection error:", err);
+            showMessageBox("Connection Error", err?.message || "Network interruption occurred.");
+        });
+    }
+
+    // ── PeerJS Setup Events ────────────────────────────────────────────────
+
+    function generateShortId() { return Math.random().toString(36).substring(2, 7).toUpperCase(); }
+
+    // Comprehensive ICE configuration array with global Twilio STUN structures and Metered TURN relays
+    function getIceServers() {
+        return [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun3.l.google.com:19302' },
+            { urls: 'stun:stun4.l.google.com:19302' },
+            { urls: 'stun:global.stun.twilio.com:3478' },
+            {
+                urls: [
+                    'turn:relay.metered.ca:80',
+                    'turn:relay.metered.ca:443',
+                    'turn:relay.metered.ca:443?transport=tcp'
+                ],
+                username: 'openrelayproject',
+                credential: 'openrelayproject'
+            }
+        ];
+    }
+
+    function createPeer(id) {
+        const options = {
+            host: '0.peerjs.com',
+            port: 443,
+            path: '/',
+            secure: true,
+            config: {
+                iceServers: getIceServers(),
+                iceTransportPolicy: 'all',  
+                iceCandidatePoolSize: 12
+            },
+            debug: 1
+        };
+        return id ? new Peer(id, options) : new Peer(options);
+    }
+
+    hostRoomBtn.addEventListener('click', () => {
+        hostRoomBtn.disabled = true;
+        const hostId = generateShortId();
+        lobbyStatusText.textContent = "Connecting to signaling network...";
+
+        peer = createPeer(hostId);
+
+        peer.on('open', (id) => {
+            displayRoomId.textContent = id;
+            lobbyInitialActions.classList.add('hidden');
+            lobbyRoomSetup.classList.remove('hidden');
+            networkRole = "host";
+            networkRoleLabel.textContent = "Role: Host (P1)";
+            lobbyStatusText.textContent = "Waiting for an opponent to join...";
+        });
+
+        peer.on('connection', (conn) => {
+            if (peerConnection) {
+                conn.on('open', () => conn.send({ type: "error", message: "Room full." }));
+                return;
+            }
+            conn.on('error', (err) => { console.error('Incoming system channel mismatch:', err); });
+            conn.on('open', () => { setupConnectionEvents(conn); });
+        });
+
+        peer.on('error', (err) => {
+            hostRoomBtn.disabled = false;
+            showMessageBox("Connection Error", err?.message || "Unable to register room ID. Try again.");
+        });
+    });
+
+    joinRoomBtn.addEventListener('click', () => {
+        const code = joinRoomCodeInput.value.trim().toUpperCase();
+        if (!code) return showMessageBox("Invalid Code", "Please enter a valid Room ID.");
+
+        joinRoomBtn.disabled = true;
+        lobbyStatusText.textContent = "Connecting to signaling network...";
+
+        peer = createPeer(null);
+
+        peer.on('open', () => {
+            lobbyStatusText.textContent = "Routing to host...";
+            const conn = peer.connect(code, { reliable: true });
+
+            const timeout = setTimeout(() => {
+                if (!peerConnection) {
+                    joinRoomBtn.disabled = false;
+                    showMessageBox("Timeout", "Could not connect to host. Verify ID is typed correctly.");
+                }
+            }, 12000);
+
+            conn.on('error', (err) => {
+                clearTimeout(timeout);
+                joinRoomBtn.disabled = false;
+                showMessageBox("Connection Error", err?.message || "Handshake rejected.");
+            });
+
+            conn.on('open', () => {
+                clearTimeout(timeout);
+                networkRole = "guest";
+                networkRoleLabel.textContent = "Role: Guest (P2)";
+                displayRoomId.textContent = code;
+                lobbyInitialActions.classList.add('hidden');
+                lobbyRoomSetup.classList.remove('hidden');
+                lobbyStatusText.textContent = "Handshake open! Finalizing synchronized parameters...";
+                setupConnectionEvents(conn);
+                
+                // Fire a small delay loop to give WebRTC time to open data pipes smoothly
+                setTimeout(() => {
+                    sendNetworkMessage({ type: "guest_ready" });
+                }, 500);
+            });
+        });
+
+        peer.on('error', (err) => {
+            joinRoomBtn.disabled = false;
+            showMessageBox("Routing Mismatch", "Could not find target matching peer ID structure.");
+        });
+    });
+
+    networkStartBtn.addEventListener('click', () => {
+        if (!peerConnection || networkRole !== "host") return;
+        networkStartBtn.disabled = true; 
+        
+        const config = { hostColor: networkColorSelect.value, timerSeconds: parseInt(networkTimerSelect.value, 10) };
+        sendNetworkMessage({ type: "game_begun", config: config });
+        initializeGameStart(config);
+    });
+
+    leaveGameButton.addEventListener('click', () => {
+        showMessageBox("Leave Game", "Exit this match?", () => window.location.reload(), true);
+    });
+
+    takebackButton.addEventListener('click', () => {
+        if (!peerConnection) return;
+        sendNetworkMessage({ type: "request_takeback" });
+        statusElement.textContent = 'Takeback request sent. Waiting for approval...';
+        takebackButton.disabled = true;
+    });
+
+    approveTakebackBtn.addEventListener('click', () => { 
+        takebackOverlay.classList.add('hidden'); 
+        sendNetworkMessage({ type: "respond_takeback", approved: true });
+        handleNetworkMessage({ type: "respond_takeback", approved: true }); 
+    });
+
+    declineTakebackBtn.addEventListener('click', () => { 
+        takebackOverlay.classList.add('hidden'); 
+        sendNetworkMessage({ type: "respond_takeback", approved: false }); 
+    });
+  </script>
+</body>
+</html>
